@@ -21,6 +21,8 @@ from toscaparser.common.exception import ExceptionCollector
 from toscaparser.common.exception import InvalidTOSCAVersionPropertyException
 from toscaparser.common.exception import RangeValueError
 from toscaparser.utils.gettextutils import _
+from jsonschema import validate as validate_with_json_schema
+from jsonschema.exceptions import ValidationError, SchemaError
 
 log = logging.getLogger('tosca')
 
@@ -160,6 +162,31 @@ def validate_timestamp(value):
             ValueError(_('"%(val)s" is not a valid timestamp. "%(msg)s"') %
                        {'val': value, 'msg': original_err_msg}))
     return
+
+
+def validate_json(value, schema):
+    try:
+        validate_with_json_schema(value, schema)
+    except ValidationError as e:
+        ExceptionCollector.appendException(ValidationError(f'Validation instance error', e))
+    except SchemaError as e:
+        ExceptionCollector.appendException(ValidationError(f'Validation schema error', e))
+    except Exception as e:
+        ExceptionCollector.appendException(ValidationError(f'Validation error', e))
+    return value
+
+
+def validate_enum(value, schema):
+    from toscaparser.elements.constraints import Schema
+    validate_string(value)
+    if schema and isinstance(schema, Schema) and schema.constraints:
+        enum_value = schema.constraints[0].enum
+        validate_list(enum_value)
+        if isinstance(enum_value, list):
+            for enum in enum_value:
+                if value in enum:
+                    return enum[value]
+    return value
 
 
 class TOSCAVersionProperty(object):

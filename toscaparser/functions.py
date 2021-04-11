@@ -92,14 +92,24 @@ class GetInput(Function):
                 UnknownInputError(input_name=self.args[0]))
 
     def result(self):
-        if self.tosca_tpl.parsed_params and \
-           self.input_name in self.tosca_tpl.parsed_params:
-            return DataEntity.validate_datatype(
-                self.tosca_tpl.tpl['inputs'][self.input_name]['type'],
-                self.tosca_tpl.parsed_params[self.input_name])
-
         input = [input_def for input_def in self.tosca_tpl.inputs
                  if self.input_name == input_def.name][0]
+
+        if self.tosca_tpl.parsed_params and \
+                self.input_name in self.tosca_tpl.parsed_params:
+            if input and input.type == Schema.ENUM:
+                return DataEntity.validate_datatype(input.type,
+                                                    self.tosca_tpl.parsed_params[self.input_name],
+                                                    input.schema)
+            value = self.tosca_tpl.parsed_params[self.input_name]
+            if value is not None:
+                return DataEntity.validate_datatype(
+                    self.tosca_tpl.tpl['inputs'][self.input_name]['type'],
+                    value)
+
+        if input and input.type == Schema.ENUM:
+            return DataEntity.validate_datatype(input.type, input.default, input.schema)
+
         return input.default
 
     @property

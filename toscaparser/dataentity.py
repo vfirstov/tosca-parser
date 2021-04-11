@@ -162,6 +162,14 @@ class DataEntity(object):
             # TODO(TBD) bug 1567063, validate source & target as PortDef type
             # as complex types not just as integers
             PortSpec.validate_additional_req(value, prop_name, custom_def)
+        elif type == Schema.JSON:
+            if entry_schema and isinstance(entry_schema, Schema):
+                if entry_schema.constraints:
+                    for c in entry_schema.constraints:
+                        validateutils.validate_json(value, c.json_schema)
+            return value
+        elif type == Schema.ENUM:
+            return validateutils.validate_enum(value, entry_schema)
         else:
             data = DataEntity(type, value, custom_def)
             return data.validate()

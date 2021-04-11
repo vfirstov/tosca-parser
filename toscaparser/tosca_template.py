@@ -28,6 +28,7 @@ from toscaparser.repositories import Repository
 from toscaparser.topology_template import TopologyTemplate
 from toscaparser.tpl_relationship_graph import ToscaGraph
 from toscaparser.utils.gettextutils import _
+from toscaparser.utils.hashutils import hash_all
 import toscaparser.utils.yamlparser
 
 
@@ -70,10 +71,13 @@ class ToscaTemplate(object):
                  yaml_dict_tpl=None):
 
         ExceptionCollector.start()
+        self._template_name = None
+        self._template = None
         self.a_file = a_file
         self.input_path = None
         self.path = None
         self.tpl = None
+        self.imports = set()
         self.nested_tosca_tpls_with_topology = {}
         self.nested_tosca_templates_with_topology = []
         if path:
@@ -81,6 +85,7 @@ class ToscaTemplate(object):
             self.path = self._get_path(path)
             if self.path:
                 self.tpl = YAML_LOADER(self.path, self.a_file)
+                self._template_name = os.path.splitext(os.path.basename(path))[0]
             if yaml_dict_tpl:
                 msg = (_('Both path and yaml_dict_tpl arguments were '
                          'provided. Using path and ignoring yaml_dict_tpl.'))
@@ -113,6 +118,59 @@ class ToscaTemplate(object):
 
         ExceptionCollector.stop()
         self.verify_template()
+
+    @property
+    def template_name(self):
+        return self._template_name
+
+    @property
+    def service_name(self):
+        return self.template_meta_data.get('service_name')
+
+    @property
+    def service_type(self):
+        return self.template_meta_data.get('service_type')
+
+    def _hash(self):
+        return hash_all(self.path, self.imports)
+
+    @property
+    def template_meta_data(self):
+        meta_data = {}
+        if self.tpl and isinstance(self.tpl, dict):
+            meta_data = self.tpl.get('metadata', {})
+
+        if self.parsed_params and isinstance(self.parsed_params, dict):
+            parsed_meta = self.parsed_params.get('metadata', {})
+            meta_data.update(parsed_meta)
+        return meta_data
+
+    @property
+    def template_description(self):
+        return self.description
+
+    @property
+    def template_version(self):
+        return self.version
+
+    @property
+    def template_object(self):
+        return self._template
+
+
+    @property
+    def dls_definitions(self):
+        return self.tpl.get(DSL_DEFINITIONS)
+
+    def get_params(self, param_group):
+        if self.tpl and isinstance(self.tpl, dict) and DSL_DEFINITIONS in self.tpl:
+            dsl = self.tpl.get(DSL_DEFINITIONS)
+            if param_group in dsl:
+                return dsl.get(param_group)
+
+    @property
+    def constraints(self):
+        return self.get_params('input_constraints')
 
     def _topology_template(self):
         return TopologyTemplate(self._tpl_topology_template(),
@@ -172,6 +230,9 @@ class ToscaTemplate(object):
                  DATA_TYPES, INTERFACE_TYPES, POLICY_TYPES, GROUP_TYPES]
         custom_defs_final = {}
 
+        if imports and isinstance(imports, list):
+            self.imports.update(imports)
+
         custom_defs, nested_imports = self._get_custom_types(
             types, imports, path)
         if custom_defs:
@@ -208,6 +269,9 @@ class ToscaTemplate(object):
             path = self.path
 
         if imports:
+            if isinstance(imports, list):
+                self.imports.update(imports)
+
             custom_service = toscaparser.imports.\
                 ImportsLoader(imports, path, type_defs, self.tpl)
 
@@ -311,9 +375,9 @@ class ToscaTemplate(object):
                               'the following error(s): \n\n\t') +
                     '\n\t'.join(ExceptionCollector.getExceptionsReport()))
         else:
-            if self.input_path:
+            if self._template_name:
                 msg = (_('The input "%(path)s" successfully passed '
-                         'validation.') % {'path': self.input_path})
+                         'validation.') % {'path': self._template_name})
             else:
                 msg = _('The pre-parsed input successfully passed validation.')
 

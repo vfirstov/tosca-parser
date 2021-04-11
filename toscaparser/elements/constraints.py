@@ -13,8 +13,11 @@
 import collections
 import datetime
 import re
-
+import os
+import json
 import toscaparser
+from jsonschema import validate as validate_with_json_schema
+from jsonschema.exceptions import ValidationError
 from toscaparser.common.exception import ExceptionCollector
 from toscaparser.common.exception import InvalidSchemaError
 from toscaparser.common.exception import ValidationError
@@ -27,22 +30,24 @@ class Schema(collections.Mapping):
 
     KEYS = (
         TYPE, REQUIRED, DESCRIPTION,
-        DEFAULT, CONSTRAINTS, ENTRYSCHEMA, STATUS
+        DEFAULT, CONSTRAINTS, ENTRYSCHEMA, STATUS,
+        TITLE, HINT, HIDDEN, UI_TYPE, UI
     ) = (
         'type', 'required', 'description',
-        'default', 'constraints', 'entry_schema', 'status'
+        'default', 'constraints', 'entry_schema', 'status',
+        'title', 'hint', 'hidden', 'uitype', 'ui'
     )
 
     PROPERTY_TYPES = (
         INTEGER, STRING, BOOLEAN, FLOAT, RANGE,
         NUMBER, TIMESTAMP, LIST, MAP,
         SCALAR_UNIT_SIZE, SCALAR_UNIT_FREQUENCY, SCALAR_UNIT_TIME,
-        VERSION, PORTDEF, PORTSPEC
+        VERSION, PORTDEF, PORTSPEC, ENUM, JSON
     ) = (
         'integer', 'string', 'boolean', 'float', 'range',
         'number', 'timestamp', 'list', 'map',
         'scalar-unit.size', 'scalar-unit.frequency', 'scalar-unit.time',
-        'version', 'PortDef', PortSpec.SHORTNAME
+        'version', 'PortDef', PortSpec.SHORTNAME, 'enum', 'json'
     )
 
     SCALAR_UNIT_SIZE_DEFAULT = 'B'
@@ -90,6 +95,26 @@ class Schema(collections.Mapping):
         return self.schema.get(self.STATUS, '')
 
     @property
+    def title(self):
+        return self.schema.get(self.TITLE, '')
+
+    @property
+    def hint(self):
+        return self.schema.get(self.HINT, '')
+
+    @property
+    def hidden(self):
+        return self.schema.get(self.HIDDEN, False)
+
+    @property
+    def uitype(self):
+        return self.schema.get(self.UI_TYPE, '')
+
+    @property
+    def ui(self):
+        return self.schema.get(self.UI, True)
+
+    @property
     def constraints(self):
         if not self.constraints_list:
             constraint_schemata = self.schema.get(self.CONSTRAINTS)
@@ -127,10 +152,10 @@ class Constraint(object):
 
     CONSTRAINTS = (EQUAL, GREATER_THAN,
                    GREATER_OR_EQUAL, LESS_THAN, LESS_OR_EQUAL, IN_RANGE,
-                   VALID_VALUES, LENGTH, MIN_LENGTH, MAX_LENGTH, PATTERN) = \
+                   VALID_VALUES, LENGTH, MIN_LENGTH, MAX_LENGTH, PATTERN, SCHEMA, ENUM_VALUES) = \
                   ('equal', 'greater_than', 'greater_or_equal', 'less_than',
                    'less_or_equal', 'in_range', 'valid_values', 'length',
-                   'min_length', 'max_length', 'pattern')
+                   'min_length', 'max_length', 'pattern', 'schema', 'enum_values')
 
     def __new__(cls, property_name=None, property_type=None, constraint=None):
         if cls is not Constraint:
@@ -596,6 +621,77 @@ class Pattern(Constraint):
                      cvalue=self.constraint_value))
 
 
+class JSONSchema(Constraint):
+
+    constraint_key = Constraint.SCHEMA
+
+    valid_types = (str, dict)
+
+    valid_prop_types = (Schema.JSON, )
+
+    def __init__(self, property_name, property_type, constraint):
+        super(JSONSchema, self).__init__(property_name, property_type, constraint)
+        if not isinstance(self.constraint_value, self.valid_types):
+            ExceptionCollector.appendException(
+                InvalidSchemaError(message='The property "schema" expects a string.'))
+
+        if isinstance(self.constraint_value, str):
+            if os.path.isfile(self.constraint_value):
+                with open(self.constraint_value) as fd:
+                    self.schema = json.load(fd)
+            else:
+                raise FileNotFoundError(f'JSON-schema not found in path: {self.constraint_value}')
+        elif isinstance(self.constraint_value, dict):
+            self.schema = self.constraint_value
+
+    def _is_valid(self, value):
+        return validate_with_json_schema(self.schema, value)
+
+    def _err_msg(self, value):
+        return (('The value "%(pvalue)s" of property "%(pname)s" does not '
+                  'match schema "%(cvalue)s".') %
+                dict(pname=self.property_name,
+                     pvalue=value,
+                     cvalue=self.constraint_value))
+
+    @property
+    def json_schema(self):
+        return self.schema
+
+
+class Enum(Constraint):
+    """Constraint class for "enum"
+    """
+    constraint_key = Constraint.ENUM_VALUES
+
+    valid_types = (list,)
+
+    valid_prop_types = (Schema.ENUM, )
+
+    def __init__(self, property_name, property_type, constraint):
+        super(Enum, self).__init__(property_name, property_type, constraint)
+        if not isinstance(self.constraint_value, self.valid_types):
+            ExceptionCollector.appendException(
+                InvalidSchemaError(message=f'The property "enum expects a list of dict.'))
+
+    def _is_valid(self, value):
+        if isinstance(value, list):
+            return all(v in self.constraint_value for v in value)
+        return value in self.constraint_value
+
+    def _err_msg(self, value):
+        allowed = '[%s]' % ', '.join(str(a) for a in self.constraint_value)
+        return (('The value "%(pvalue)s" of property "%(pname)s" is not '
+                 'valid. Expected a value from "%(cvalue)s".') %
+                dict(pname=self.property_name,
+                     pvalue=value,
+                     cvalue=allowed))
+
+    @property
+    def enum(self):
+        return self.constraint_value
+
+
 constraint_mapping = {
     Constraint.EQUAL: Equal,
     Constraint.GREATER_THAN: GreaterThan,
@@ -607,7 +703,9 @@ constraint_mapping = {
     Constraint.LENGTH: Length,
     Constraint.MIN_LENGTH: MinLength,
     Constraint.MAX_LENGTH: MaxLength,
-    Constraint.PATTERN: Pattern
+    Constraint.PATTERN: Pattern,
+    Constraint.SCHEMA: JSONSchema,
+    Constraint.ENUM_VALUES: Enum
 }
 
 

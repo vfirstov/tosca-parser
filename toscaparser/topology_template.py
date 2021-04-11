@@ -12,6 +12,7 @@
 
 
 import logging
+import os
 
 from toscaparser.common import exception
 from toscaparser.dataentity import DataEntity
@@ -35,15 +36,18 @@ SECTIONS = (DESCRIPTION, INPUTS, NODE_TEMPLATES,
             'relationship_templates', 'outputs', 'groups',
             'substitution_mappings', 'policies')
 
+FILE = "from"
+
 log = logging.getLogger("tosca.model")
 
 
 class TopologyTemplate(object):
 
     '''Load the template data.'''
-    def __init__(self, template, custom_defs,
+    def __init__(self, path, template, custom_defs,
                  rel_types=None, parsed_params=None,
                  sub_mapped_node_template=None):
+        self.path = path
         self.tpl = template
         self.sub_mapped_node_template = sub_mapped_node_template
         if self.tpl:
@@ -108,10 +112,35 @@ class TopologyTemplate(object):
 
     def _outputs(self):
         outputs = []
+
+        def load_file(file):
+            from toscaparser.tosca_template import YAML_LOADER
+            output_path = file
+            if os.path.exists(output_path):
+                return YAML_LOADER(output_path)
+            if self.path:
+                output_path = os.path.normpath(os.path.join(os.path.dirname(self.path), file))
+                if os.path.exists(output_path):
+                    return YAML_LOADER(output_path)
+            exception.ExceptionCollector.appendException(
+                FileNotFoundError("Template outputs {} not found".format(output_path))
+            )
+            return {}
+
+        def process_output(output_name, output_attrs):
+            orm_output = Output(output_name, output_attrs)
+            orm_output.validate()
+            outputs.append(orm_output)
+
         for name, attrs in self._tpl_outputs().items():
-            output = Output(name, attrs)
-            output.validate()
-            outputs.append(output)
+            if name == FILE and isinstance(attrs, list):
+                for file in attrs:
+                    output_tpl = load_file(file)
+                    for _name, _attrs in output_tpl.items():
+                        process_output(_name, _attrs)
+            else:
+                process_output(name, attrs)
+
         return outputs
 
     def _substitution_mappings(self):
@@ -336,7 +365,7 @@ class TopologyTemplate(object):
                                                                    value)
         for output in self.outputs:
             func = functions.get_function(self, self.outputs, output.value)
-            if isinstance(func, functions.GetAttribute):
+            if isinstance(func, (functions.GetAttribute, functions.GetProperty)):
                 output.attrs[output.VALUE] = func
 
     @classmethod

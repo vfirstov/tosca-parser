@@ -20,7 +20,7 @@ SECTIONS = (LIFECYCLE, CONFIGURE, LIFECYCLE_SHORTNAME,
             'tosca.interfaces.relationship.Configure',
             'Standard', 'Configure')
 
-INTERFACEVALUE = (IMPLEMENTATION, INPUTS) = ('implementation', 'inputs')
+INTERFACE_VALUES = (IMPLEMENTATION, INPUTS, SERIALIZER) = ('implementation', 'inputs', 'serializer')
 
 INTERFACE_DEF_RESERVED_WORDS = ['type', 'inputs', 'derived_from', 'version',
                                 'description']
@@ -71,6 +71,8 @@ class InterfacesDef(StatefulEntityType):
                         self.implementation = j
                     elif i == INPUTS:
                         self.inputs = j
+                    elif i == SERIALIZER:
+                        self.serializer = j
                     else:
                         what = ('"interfaces" of template "%s"' %
                                 self.node_template.name)
